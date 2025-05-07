@@ -2,19 +2,10 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_openai import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
-
 from utils.openai_utils import DEFAULT_MODEL, OPENAI_MODELS
-
 def create_rag_chain(api_key=None, model_version=None):
     """
     Create a RAG chain using LangChain.
-    
-    Args:
-        api_key (str, optional): OpenAI API key.
-        model_version (str, optional): The specific model version to use.
-        
-    Returns:
-        LLMChain: A LangChain chain for RAG responses.
     """
     # Use the specified model version or fall back to default
     selected_model = model_version or DEFAULT_MODEL
@@ -26,7 +17,7 @@ def create_rag_chain(api_key=None, model_version=None):
     # Get the API name for the selected model
     model_name = OPENAI_MODELS[selected_model]["api_name"]
     
-    # Create the language model
+    # Create the language model - remove any extra parameters beyond the necessary ones
     llm = ChatOpenAI(
         model_name=model_name,
         openai_api_key=api_key,
