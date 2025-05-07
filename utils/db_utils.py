@@ -1,21 +1,31 @@
 import os
-import datetime
-import logging
-import json
 import time
-import sqlalchemy
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey, LargeBinary
+import datetime
+import json
+import logging
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.exc import OperationalError
 
-# Set up logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create the SQLAlchemy base class
+# Create the database engine
+def get_database_url():
+    # Use the environment variable if available
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        # If not, use SQLite in memory for simplicity
+        db_url = "sqlite:///chat_database.db"
+    return db_url
+
+# Create engine and base
+engine = create_engine(get_database_url())
 Base = declarative_base()
 
-# Define the database models
+# Define models
 class User(Base):
     """User model to store user information."""
     __tablename__ = "users"
@@ -42,7 +52,7 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<Conversation(id={self.id}, user_id={self.user_id}, title={self.title})>"
+        return f"<Conversation(id={self.id}, title={self.title})>"
 
 class Message(Base):
     """Message model to store chat messages."""
@@ -58,7 +68,7 @@ class Message(Base):
     conversation = relationship("Conversation", back_populates="messages")
     
     def __repr__(self):
-        return f"<Message(id={self.id}, conversation_id={self.conversation_id}, role={self.role})>"
+        return f"<Message(id={self.id}, role={self.role})>"
 
 class KnowledgeItem(Base):
     """Model for storing knowledge items with embeddings."""
@@ -76,25 +86,12 @@ class KnowledgeItem(Base):
 def initialize_database():
     """Create database tables if they don't exist with retry logic."""
     try:
-        # Try to create the database tables
-        execute_with_retry(create_tables)
+        execute_with_retry(Base.metadata.create_all, engine)
         logger.info("Database tables created successfully")
         print("Database tables created successfully")
     except Exception as e:
-        logger.error(f"Database initialization error: {str(e)}")
-        print(f"Database initialization error: {str(e)}")
-
-def create_tables():
-    """Create all defined tables in the database."""
-    # Get the database URL from environment
-    database_url = os.environ.get("DATABASE_URL")
-    
-    if not database_url:
-        raise ValueError("DATABASE_URL environment variable is not set")
-    
-    # Create engine and tables
-    engine = create_engine(database_url)
-    Base.metadata.create_all(engine)
+        logger.error(f"Error initializing database: {str(e)}")
+        print(f"Error initializing database: {str(e)}")
 
 def execute_with_retry(func, *args, **kwargs):
     """Execute a database function with retry logic."""
@@ -104,36 +101,28 @@ def execute_with_retry(func, *args, **kwargs):
     for attempt in range(max_retries):
         try:
             return func(*args, **kwargs)
-        except sqlalchemy.exc.OperationalError as e:
+        except OperationalError as e:
             if attempt < max_retries - 1:
-                logger.warning(f"Database connection error: {str(e)}. Retrying in {retry_delay} seconds (Attempt {attempt + 1}/{max_retries})")
+                logger.error(f"Database connection error: {str(e)}. Retrying in {retry_delay} seconds (Attempt {attempt + 1}/{max_retries})")
                 time.sleep(retry_delay)
                 retry_delay *= 1.5  # Exponential backoff
             else:
-                logger.error(f"Max retries reached. Database operation failed: {str(e)}")
+                logger.error(f"Database connection error after {max_retries} attempts: {str(e)}")
                 raise
-
-def get_session():
-    """Get a database session."""
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        raise ValueError("DATABASE_URL environment variable is not set")
-    
-    engine = create_engine(database_url)
-    Session = sessionmaker(bind=engine)
-    return Session()
 
 def get_or_create_user(username=None):
     """Get or create a user."""
     def _get_or_create_user():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
-            # Try to get the first user (we're using a simple model)
+            # Try to get the first user (for simplicity we just use one user)
             user = session.query(User).first()
             
             # If no user exists, create one
             if not user:
-                user = User(username=username or "default_user")
+                user = User(username=username or "Default User")
                 session.add(user)
                 session.commit()
             
@@ -146,15 +135,18 @@ def get_or_create_user(username=None):
 def get_or_create_conversation(user_id, title=None):
     """Get or create a conversation for a user."""
     def _get_or_create_conversation():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
-            # Try to get the latest conversation for the user
-            conversation = session.query(Conversation).filter(
-                Conversation.user_id == user_id
-            ).order_by(Conversation.created_at.desc()).first()
+            # Try to get the most recent conversation
+            conversation = session.query(Conversation)\
+                .filter(Conversation.user_id == user_id)\
+                .order_by(Conversation.created_at.desc())\
+                .first()
             
-            # If no conversation exists, create one
-            if not conversation:
+            # If no conversation exists or a new title is provided, create one
+            if not conversation or title:
                 conversation = Conversation(
                     user_id=user_id,
                     title=title or "New Conversation"
@@ -171,7 +163,9 @@ def get_or_create_conversation(user_id, title=None):
 def add_message_to_db(conversation_id, role, content, image_data=None):
     """Add a message to the database."""
     def _add_message():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
             message = Message(
                 conversation_id=conversation_id,
@@ -181,7 +175,7 @@ def add_message_to_db(conversation_id, role, content, image_data=None):
             )
             session.add(message)
             session.commit()
-            return message.id
+            return True
         finally:
             session.close()
     
@@ -190,20 +184,24 @@ def add_message_to_db(conversation_id, role, content, image_data=None):
 def get_conversation_messages(conversation_id, limit=100):
     """Get messages for a conversation."""
     def _get_messages():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
-            messages = session.query(Message).filter(
-                Message.conversation_id == conversation_id
-            ).order_by(Message.timestamp).limit(limit).all()
+            messages = session.query(Message)\
+                .filter(Message.conversation_id == conversation_id)\
+                .order_by(Message.timestamp)\
+                .limit(limit)\
+                .all()
             
-            # Convert to serializable format
+            # Convert to dictionary for easy serialization
             result = []
-            for msg in messages:
+            for message in messages:
                 result.append({
-                    "id": msg.id,
-                    "role": msg.role,
-                    "content": msg.content,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None
+                    "id": message.id,
+                    "role": message.role,
+                    "content": message.content,
+                    "timestamp": message.timestamp.isoformat()
                 })
             
             return result
@@ -215,7 +213,9 @@ def get_conversation_messages(conversation_id, limit=100):
 def add_knowledge_item(content, embedding, source=None):
     """Add a knowledge item with embedding to the database."""
     def _add_knowledge_item():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
             # Convert embedding to JSON string
             embedding_json = json.dumps(embedding)
@@ -236,22 +236,22 @@ def add_knowledge_item(content, embedding, source=None):
 def get_all_knowledge_items():
     """Get all knowledge items with embeddings."""
     def _get_items():
-        session = get_session()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
         try:
             items = session.query(KnowledgeItem).all()
             
-            # Convert to usable format
             result = []
             for item in items:
-                # Parse embedding from JSON
-                embedding = json.loads(item.embedding) if item.embedding else None
-                
+                # Parse the embedding JSON
+                embedding = json.loads(item.embedding)
                 result.append({
                     "id": item.id,
                     "content": item.content,
                     "embedding": embedding,
                     "source": item.source,
-                    "created_at": item.created_at.isoformat() if item.created_at else None
+                    "created_at": item.created_at.isoformat()
                 })
             
             return result
