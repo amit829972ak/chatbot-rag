@@ -24,31 +24,17 @@ OPENAI_MODELS = {
 
 # Default model
 DEFAULT_MODEL = "gpt-4o"
-# the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-# do not change this unless explicitly requested by the user
 
 def get_openai_client(api_key=None):
     """
     Get or create an OpenAI client with the provided API key.
-    If no key is provided, try to use the environment variable.
-    
-    Args:
-        api_key (str, optional): OpenAI API key
-        
-    Returns:
-        OpenAI: OpenAI client
     """
     if not api_key:
         raise Exception("No API key provided. Please provide an OpenAI API key.")
     
     try:
-        # Create the client - simplified to fix the 'proxies' error
+        # Create the client with only api_key parameter
         client = OpenAI(api_key=api_key)
-        
-        # Simple validation of API key format
-        if not api_key.startswith("sk-") or len(api_key) < 20:
-            raise Exception("API key appears to be invalid. OpenAI API keys start with 'sk-' and are longer.")
-        
         return client
     
     except Exception as e:
@@ -63,19 +49,6 @@ def get_openai_client(api_key=None):
 def get_ai_response(prompt, system_prompt=None, context=None, api_key=None, model_version=None):
     """
     Get a response from the OpenAI API.
-    
-    Args:
-        prompt (str): The user's prompt.
-        system_prompt (str, optional): System instructions to guide the AI.
-        context (list, optional): Previous conversation context.
-        api_key (str, optional): OpenAI API key.
-        model_version (str, optional): The specific model version to use.
-        
-    Returns:
-        str: The AI's response.
-        
-    Raises:
-        Exception: If there's an API error (rate limit, authentication, etc.)
     """
     try:
         # Get client
@@ -135,12 +108,6 @@ def get_ai_response(prompt, system_prompt=None, context=None, api_key=None, mode
 def encode_image_to_base64(image):
     """
     Encode an image to base64 for API transmission.
-    
-    Args:
-        image (PIL.Image): The image to encode.
-        
-    Returns:
-        str: Base64-encoded image string.
     """
     buffered = io.BytesIO()
     image.save(buffered, format="JPEG")
@@ -151,14 +118,6 @@ def encode_image_to_base64(image):
 def analyze_image_content(image, api_key=None, model_version=None):
     """
     Analyze an image using OpenAI's vision capabilities.
-    
-    Args:
-        image (PIL.Image): The image to analyze.
-        api_key (str, optional): OpenAI API key.
-        model_version (str, optional): The specific model version to use.
-        
-    Returns:
-        str: Analysis of the image content.
     """
     try:
         # Get client
@@ -215,14 +174,6 @@ def analyze_image_content(image, api_key=None, model_version=None):
 def get_embedding(text, api_key=None, model_version=None):
     """
     Get an embedding vector for the given text.
-    
-    Args:
-        text (str): The text to embed.
-        api_key (str, optional): OpenAI API key.
-        model_version (str, optional): Not used for embeddings, but included for API consistency.
-        
-    Returns:
-        list: The embedding vector.
     """
     try:
         # Get client
