@@ -107,16 +107,9 @@ class Agent:
         formatted_messages = []
         
         if history:
-            # Use provided history (usually from database)
+            # When provided with history from the database
             for msg in history:
-                role = "user" if msg["role"] == "user" else "assistant"
-                content = msg["content"]
-                
-                # Add the message content
-                formatted_messages.append((role, content))
-        else:
-            # Use in-memory history
-            for msg in self.history:
+                # Convert 'user' and 'assistant' roles to Streamlit format
                 role = "user" if msg["role"] == "user" else "assistant"
                 content = msg["content"]
                 
@@ -139,9 +132,9 @@ class Agent:
             str: The AI's response.
         """
         try:
-            # Validate API key
+            # Validate API key availability
             if not self.api_key:
-                return "Please enter your API key in the sidebar to use this chatbot."
+                return f"Please enter a valid API key for the selected {self.selected_model.capitalize()} model in the sidebar."
             
             # Determine which model's functions to use
             if self.selected_model == "gemini":
@@ -163,74 +156,122 @@ class Agent:
                 analyze_image = openai_analyze_image
                 get_embedding = openai_get_embedding
             
-            # Add user query to history
+            # Add the user query to history
             self.add_to_history("user", query)
             
-            # Extract searchable content from user query
-            searchable_query = query
-            
-            # Various response strategies based on inputs
+            # Determine response strategy based on inputs
             response = None
-            relevant_info = None
             
-            # Case 1: Image + Query - Use multimodal processing
-            if image and query:
-                # First analyze the image
-                image_analysis = analyze_image(image, self.api_key, self.model_version)
-                
-                # Then combine with the query for a response
-                response = get_multimodal_response(query, image_analysis, self.api_key, self.model_version)
+            # Case 1: If we have an image, analyze it and respond to the query in that context
+            if image:
+                try:
+                    # Step 1: Analyze the image
+                    image_analysis = analyze_image(image, self.api_key, self.model_version)
+                    
+                    # Step 2: Generate a response that incorporates both the query and image analysis
+                    response = get_multimodal_response(
+                        query=query, 
+                        image_analysis=image_analysis, 
+                        api_key=self.api_key,
+                        model_version=self.model_version
+                    )
+                except Exception as e:
+                    response = f"Error analyzing image: {str(e)}"
             
-            # Case 2: Document + Query - Use RAG approach
-            elif document_content and query:
-                # Make the document content searchable in the query
-                searchable_query = f"{query}\n\nDocument content: {document_content[:1000]}"
-                
-                # Get an embedding for the query
-                query_embedding = get_embedding(query, self.api_key, self.model_version)
-                
-                # Prepare document chunks for searching (simple approach)
-                document_chunks = []
-                chunk_size = 2000
-                for i in range(0, len(document_content), chunk_size):
-                    chunk = document_content[i:i+chunk_size]
-                    document_chunks.append({"content": chunk, "embedding": get_embedding(chunk, self.api_key, self.model_version)})
-                
-                # Find relevant chunks
-                relevant_chunks = []
-                for chunk in document_chunks:
-                    # Add the content as relevant info
-                    relevant_chunks.append(chunk["content"])
-                
-                # Use RAG to generate a response
-                if relevant_chunks:
-                    response = get_rag_response(query, relevant_chunks, self.api_key, self.model_version)
-                    relevant_info = relevant_chunks
+            # Case 2: If we have document content, use that as context
+            elif document_content:
+                try:
+                    # Include the document in the response
+                    system_prompt = """
+                    You are a helpful assistant that specializes in analyzing documents and answering questions about them.
+                    
+                    For structured data like CSV, TSV, or XLSX content, format your response in a clear, tabular way when appropriate.
+                    For PDF content, include page references if available.
+                    Be concise but comprehensive in your analysis.
+                    """
+                    
+                    # Truncate document if it's too long (some API limits)
+                    max_len = 50000  # Reasonable limit for most APIs
+                    truncated_content = document_content[:max_len]
+                    if len(document_content) > max_len:
+                        truncated_content += f"\n\n[Document truncated due to length. {len(document_content) - max_len} characters omitted.]"
+                    
+                    # Combine the query with document content instruction
+                    enhanced_prompt = f"""
+                    I'm going to ask a question about the following document content:
+                    
+                    {truncated_content}
+                    
+                    My question is: {query}
+                    
+                    Please provide a detailed answer based on the content of the document.
+                    """
+                    
+                    # Get response with document context
+                    response = get_ai_response(
+                        prompt=enhanced_prompt, 
+                        system_prompt=system_prompt,  
+                        context=self.get_conversation_context(),
+                        api_key=self.api_key,
+                        model_version=self.model_version
+                    )
+                except Exception as e:
+                    response = f"Error processing document: {str(e)}"
             
-            # Case 3: Vector store search + Query - Use RAG approach
-            elif vector_store and query:
-                # Get an embedding for the query
-                query_embedding = get_embedding(query, self.api_key, self.model_version)
-                
-                # Search the vector store for relevant information
-                relevant_info = search_vector_store(vector_store, query_embedding)
-                
-                # Use RAG to generate a response if relevant info found
-                if relevant_info:
-                    response = get_rag_response(query, relevant_info, self.api_key, self.model_version)
+            # Case 3: Use RAG if we have a vector store
+            elif vector_store:
+                try:
+                    # Get the query embedding
+                    query_embedding = get_embedding(query, self.api_key, self.model_version)
+                    
+                    # Search the vector store
+                    relevant_docs = search_vector_store(vector_store, query_embedding)
+                    
+                    if relevant_docs and len(relevant_docs) > 0:
+                        # We have relevant context, use RAG
+                        response = get_rag_response(
+                            query=query, 
+                            context=relevant_docs, 
+                            api_key=self.api_key,
+                            model_version=self.model_version
+                        )
+                    else:
+                        # No relevant context found, fall back to standard response
+                        response = get_ai_response(
+                            prompt=query, 
+                            context=self.get_conversation_context(),
+                            api_key=self.api_key,
+                            model_version=self.model_version
+                        )
+                except Exception as e:
+                    # If RAG fails, fall back to standard response
+                    response = get_ai_response(
+                        prompt=query, 
+                        context=self.get_conversation_context(),
+                        api_key=self.api_key,
+                        model_version=self.model_version
+                    )
             
-            # Default case: Simple query-response
-            if not response:
-                response = get_ai_response(query, context=self.history[-10:] if len(self.history) > 0 else None, api_key=self.api_key, model_version=self.model_version)
+            # Case 4: Default to standard response
+            else:
+                response = get_ai_response(
+                    prompt=query, 
+                    context=self.get_conversation_context(),
+                    api_key=self.api_key,
+                    model_version=self.model_version
+                )
             
-            # Add the response to conversation history
+            # Add the response to history
             self.add_to_history("assistant", response)
             
             return response
             
         except Exception as e:
             error_message = f"Error processing your query: {str(e)}"
-            # Don't add errors to conversation history
+            
+            # Add error to history
+            self.add_to_history("assistant", error_message)
+            
             return error_message
     
     def get_conversation_context(self):
@@ -240,7 +281,9 @@ class Agent:
         Returns:
             list: The conversation history.
         """
-        return self.history
+        # Get the most recent messages (limited to avoid token limits)
+        recent_history = self.history[-10:] if len(self.history) > 10 else self.history
+        return recent_history
     
     def reset(self):
         """
