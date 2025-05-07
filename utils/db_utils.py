@@ -5,7 +5,7 @@ import json
 import logging
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from sqlalchemy.exc import OperationalError
 
 # Configure logging
@@ -24,6 +24,9 @@ def get_database_url():
 # Create engine and base
 engine = create_engine(get_database_url())
 Base = declarative_base()
+
+# Create a scoped session factory
+Session = scoped_session(sessionmaker(bind=engine))
 
 # Define models
 class User(Base):
@@ -113,7 +116,6 @@ def execute_with_retry(func, *args, **kwargs):
 def get_or_create_user(username=None):
     """Get or create a user."""
     def _get_or_create_user():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
@@ -126,7 +128,10 @@ def get_or_create_user(username=None):
                 session.add(user)
                 session.commit()
             
-            return user
+            # Create a dictionary that represents the user
+            user_dict = {"id": user.id, "username": user.username}
+            
+            return User(id=user_dict["id"], username=user_dict["username"])
         finally:
             session.close()
     
@@ -135,7 +140,6 @@ def get_or_create_user(username=None):
 def get_or_create_conversation(user_id, title=None):
     """Get or create a conversation for a user."""
     def _get_or_create_conversation():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
@@ -154,7 +158,10 @@ def get_or_create_conversation(user_id, title=None):
                 session.add(conversation)
                 session.commit()
             
-            return conversation
+            # Create a dictionary that represents the conversation
+            conv_dict = {"id": conversation.id, "user_id": conversation.user_id, "title": conversation.title}
+            
+            return Conversation(id=conv_dict["id"], user_id=conv_dict["user_id"], title=conv_dict["title"])
         finally:
             session.close()
     
@@ -163,7 +170,6 @@ def get_or_create_conversation(user_id, title=None):
 def add_message_to_db(conversation_id, role, content, image_data=None):
     """Add a message to the database."""
     def _add_message():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
@@ -184,7 +190,6 @@ def add_message_to_db(conversation_id, role, content, image_data=None):
 def get_conversation_messages(conversation_id, limit=100):
     """Get messages for a conversation."""
     def _get_messages():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
@@ -213,7 +218,6 @@ def get_conversation_messages(conversation_id, limit=100):
 def add_knowledge_item(content, embedding, source=None):
     """Add a knowledge item with embedding to the database."""
     def _add_knowledge_item():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
@@ -236,7 +240,6 @@ def add_knowledge_item(content, embedding, source=None):
 def get_all_knowledge_items():
     """Get all knowledge items with embeddings."""
     def _get_items():
-        Session = sessionmaker(bind=engine)
         session = Session()
         
         try:
