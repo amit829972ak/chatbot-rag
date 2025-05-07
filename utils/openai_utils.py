@@ -42,7 +42,7 @@ def get_openai_client(api_key=None):
         raise Exception("No API key provided. Please provide an OpenAI API key.")
     
     try:
-        # Create the client without the proxies parameter
+        # Create the client - simplified to fix the 'proxies' error
         client = OpenAI(api_key=api_key)
         
         # Simple validation of API key format
